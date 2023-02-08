@@ -65,10 +65,13 @@ struct QueueFamilyIndices {
 class HelloTriangleApplication {
 public:
     void run() {
-        initWindow();
-        initVulkan();
-        mainLoop();
-        cleanup();
+        initWindow(); // Initialise the GLFW window
+
+        initVulkan(); // Initialise Vulkan
+
+        mainLoop(); // Run the main loop
+
+        cleanup(); // Cleanup objects
     }
 
 private:
@@ -76,6 +79,11 @@ private:
 
     VkInstance instance; // The connection between the application and Vulkan
     VkDebugUtilsMessengerEXT debugMessenger; // Responsible for handling debug callbacks
+
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // The graphics card Vulkan will be using
+    VkDevice device; // The logical device Vulkan will be using
+
+    VkQueue graphicsQueue; // The graphics queue handle
 
     void initWindow() {
         glfwInit(); // This must be called to initialise the GLFW library
@@ -93,6 +101,8 @@ private:
         setupDebugMessenger(); // Sets up a debug messenger for Vulkan
 
         pickPhysicalDevice(); // Chooses a graphics card to use for Vulkan
+
+        createLogicalDevice(); // Creates the logical device for Vulkan
     }
 
     void mainLoop() {
@@ -103,6 +113,8 @@ private:
     }
 
     void cleanup() {
+        vkDestroyDevice(device, nullptr); // Destroys the logical device
+
         if (enableValidationLayers) {
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr); // Destroys the Vulkan debug messenger
         }
@@ -201,10 +213,8 @@ private:
         * We can list the graphics cards available just like with extensions and validation layers.
         * Then we need to check if the device is suitable for our uses, and if it is, it can be used.
         */
-        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // Assign a nullptr for now
-
         uint32_t deviceCount = 0;
-        vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+        vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr); // Finds all available devices
 
         // If zero supported devices are found, throw an error
         if (deviceCount == 0) {
@@ -228,6 +238,59 @@ private:
         }
     }
 
+    void createLogicalDevice() {
+        /*
+        * Creates the logical device, which essentially links the physical device to Vulkan so commands can be run through it.
+        * The first task is to specify the queues Vulkan will be using, in this case, only the graphics queue.
+        * This is also where device features can be enabled for use.
+        * Lastly, much like the Vulkan instance object, it requires a main create info struct to be filled in.
+        * Devices can also use extensions and validation layers, but unlike the Vulkan instance, these are device specific.
+        * Validation layers for the device are ignored by up-to-date implementations, since the Vulkan instance handles these anyways.
+        * Although, it is still recommended to specify these to be compatible with older implementations.
+        */
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice); // Accesses the queue families for the physical device
+
+        // Multiple of these queue create info structs can be specified, depending on how many queue families we are using
+        VkDeviceQueueCreateInfo queueCreateInfo{}; // Describes the number of queues we want for a single queue family
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value(); // We're only interested in a queue with graphics capabilities for now
+        queueCreateInfo.queueCount = 1; // So we also set the queue count to one
+
+        float queuePriority = 1.0f;
+        queueCreateInfo.pQueuePriorities = &queuePriority; // Influences the scheduling of command buffer execution (required even for one queue)
+
+        VkPhysicalDeviceFeatures deviceFeatures{}; // Specifies the set of device features we want to use (leaving this blank for now)
+
+        // Specifies the create info for the logical device, it has similar fields to the Vulkan instance one
+        VkDeviceCreateInfo createInfo{}; // The main device create info struct
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+        createInfo.pQueueCreateInfos = &queueCreateInfo; // Points to the queue create info structs
+        createInfo.queueCreateInfoCount = 1; // Amount of queue create infos (when multiple queue families are used)
+
+        createInfo.pEnabledFeatures = &deviceFeatures; // Points to the enabled device features
+
+        createInfo.enabledExtensionCount = 0; // We aren't using any device specific extensions
+
+        // (Optional) These fields are ignored in up-to-date implementations of Vulkan,
+        // but it's still recommended to specify these anyways to be compatible with older implementations
+        if (enableValidationLayers) {
+            createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+            createInfo.ppEnabledLayerNames = validationLayers.data();
+        }
+        else {
+            createInfo.enabledLayerCount = 0;
+        }
+
+        // The logical device can now be created
+        if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create logical device!");
+        }
+
+        // The queues are automatically created with the logical device, but this creates handles to interface with them
+        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue); // Creating one queue from the graphics queue family
+    }
+
     bool isDeviceSuitable(VkPhysicalDevice device) {
         /*
         * Not all supported graphics cards are suitable for the operations we need to perform.
@@ -236,10 +299,10 @@ private:
         * Using this information, there are many ways to choose a suitable graphics card.
         * A good way of choosing could be to give each device a score based on their properties and features, then choose the device with the highest score.
         */
-        VkPhysicalDeviceProperties deviceProperties; // Holds basic device properties like the name, type and supported Vulkan version
+        VkPhysicalDeviceProperties deviceProperties; // (Optional) Holds basic device properties like the name, type and supported Vulkan version
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
-        VkPhysicalDeviceFeatures deviceFeatures; // Holds optional features like texture compression, 64 bit floats and multi viewport rendering (useful for VR)
+        VkPhysicalDeviceFeatures deviceFeatures; // (Optional) Holds optional features like texture compression, 64 bit floats and multi viewport rendering (useful for VR)
         vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
         // Since we're just starting out, all we'll check for is support for the queue families we want to use
@@ -264,10 +327,10 @@ private:
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
         // We need to check each supported queue family to find the ones we require
-        int i = 0; // The queue families we use are denoted by index, so we increment this everytime one is found
+        int i = 0; // The queue families we use are denoted by index, so we increment this every loop
         for (const VkQueueFamilyProperties& queueFamily : queueFamilies) {
             if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) { // Checks for a graphics queue family
-                indices.graphicsFamily = i;
+                indices.graphicsFamily = i; // Assign the index to the graphics family
             }
 
             if (indices.isComplete()) {
