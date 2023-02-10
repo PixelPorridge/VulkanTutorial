@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <optional>
+#include <set>
 
 // Window sizes
 const uint32_t WIDTH = 800;
@@ -54,11 +55,12 @@ struct QueueFamilyIndices {
     * Not all graphics cards may support these queue families, which is why they are wrapped in optional.
     * This allows properties to be checked if it has a value or not, therefore they are allowed to have no value.
     */
-    std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> graphicsFamily; // Drawing commands
+    std::optional<uint32_t> presentFamily; // Presents rendered images to a surface
 
     bool isComplete() {
         // Checks that all required properties in the struct have a value, aka the queue families are supported by the graphics card
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -79,11 +81,13 @@ private:
 
     VkInstance instance; // The connection between the application and Vulkan
     VkDebugUtilsMessengerEXT debugMessenger; // Responsible for handling debug callbacks
+    VkSurfaceKHR surface; // A surface for Vulkan to present rendered images to, backed by the GLFW window
 
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // The graphics card Vulkan will be using
     VkDevice device; // The logical device Vulkan will be using
 
-    VkQueue graphicsQueue; // The graphics queue handle
+    VkQueue graphicsQueue; // Graphics queue handle
+    VkQueue presentQueue; // Presentation queue handle
 
     void initWindow() {
         glfwInit(); // This must be called to initialise the GLFW library
@@ -99,6 +103,8 @@ private:
         createInstance(); // Creates an instance for Vulkan
 
         setupDebugMessenger(); // Sets up a debug messenger for Vulkan
+
+        createSurface(); // Creates the surface for Vulkan to present rendered images
 
         pickPhysicalDevice(); // Chooses a graphics card to use for Vulkan
 
@@ -119,6 +125,7 @@ private:
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr); // Destroys the Vulkan debug messenger
         }
 
+        vkDestroySurfaceKHR(instance, surface, nullptr); // Destroys the Vulkan surface
         vkDestroyInstance(instance, nullptr); // Destroys the Vulkan instance
 
         glfwDestroyWindow(window); // Destroys the window and its context
@@ -207,6 +214,17 @@ private:
         }
     }
 
+    void createSurface() {
+        /*
+        * Creates a surface for Vulkan to present rendered images to.
+        * Normally, there would need to be platform-specific code to setup up a surface for each platform we want to support.
+        * But GLFW supports many platforms, so it's easier for us to use this function that does all of the hard work for us.
+        */
+        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create window surface");
+        }
+    }
+
     void pickPhysicalDevice() {
         /*
         * The physical device is the graphics card that Vulkan will be using.
@@ -241,7 +259,7 @@ private:
     void createLogicalDevice() {
         /*
         * Creates the logical device, which essentially links the physical device to Vulkan so commands can be run through it.
-        * The first task is to specify the queues Vulkan will be using, in this case, only the graphics queue.
+        * The first task is to specify the queues Vulkan will be using from the queue families we requested.
         * This is also where device features can be enabled for use.
         * Lastly, much like the Vulkan instance object, it requires a main create info struct to be filled in.
         * Devices can also use extensions and validation layers, but unlike the Vulkan instance, these are device specific.
@@ -250,14 +268,19 @@ private:
         */
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice); // Accesses the queue families for the physical device
 
-        // Multiple of these queue create info structs can be specified, depending on how many queue families we are using
-        VkDeviceQueueCreateInfo queueCreateInfo{}; // Describes the number of queues we want for a single queue family
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value(); // We're only interested in a queue with graphics capabilities for now
-        queueCreateInfo.queueCount = 1; // So we also set the queue count to one
+        std::vector<VkDeviceQueueCreateInfo> queueCreateInfos; // Because we will be making a queue for each family
+        std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() }; // Holds each queue family index
 
+        // Since multiple queue families are required, we loop through each one defining their create infos
         float queuePriority = 1.0f;
-        queueCreateInfo.pQueuePriorities = &queuePriority; // Influences the scheduling of command buffer execution (required even for one queue)
+        for (uint32_t queueFamily : uniqueQueueFamilies) {
+            VkDeviceQueueCreateInfo queueCreateInfo{}; // Describes the queue we are creating
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamily; // Index of the queue family
+            queueCreateInfo.queueCount = 1; // Only creating one queue per queue family
+            queueCreateInfo.pQueuePriorities = &queuePriority; // Influences the scheduling of command buffer execution (required even for one queue)
+            queueCreateInfos.push_back(queueCreateInfo); // Add the queue to the list
+        }
 
         VkPhysicalDeviceFeatures deviceFeatures{}; // Specifies the set of device features we want to use (leaving this blank for now)
 
@@ -265,8 +288,8 @@ private:
         VkDeviceCreateInfo createInfo{}; // The main device create info struct
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
-        createInfo.pQueueCreateInfos = &queueCreateInfo; // Points to the queue create info structs
-        createInfo.queueCreateInfoCount = 1; // Amount of queue create infos (when multiple queue families are used)
+        createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()); // Amount of queue create infos (total queue families used)
+        createInfo.pQueueCreateInfos = queueCreateInfos.data(); // Points to the queue create info structs
 
         createInfo.pEnabledFeatures = &deviceFeatures; // Points to the enabled device features
 
@@ -288,7 +311,8 @@ private:
         }
 
         // The queues are automatically created with the logical device, but this creates handles to interface with them
-        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue); // Creating one queue from the graphics queue family
+        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
 
     bool isDeviceSuitable(VkPhysicalDevice device) {
@@ -331,6 +355,14 @@ private:
         for (const VkQueueFamilyProperties& queueFamily : queueFamilies) {
             if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) { // Checks for a graphics queue family
                 indices.graphicsFamily = i; // Assign the index to the graphics family
+            }
+
+            // Believe it or not, some graphics cards do not actually support surface rendering, so we have to check for that
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport); // Checks whether the queue family at the specified index has surface support
+
+            if (presentSupport) {
+                indices.presentFamily = i; // Assign index if device has surface support
             }
 
             if (indices.isComplete()) {
