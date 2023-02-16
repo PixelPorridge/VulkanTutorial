@@ -78,7 +78,7 @@ struct SwapChainSupportDetails {
     */
     VkSurfaceCapabilitiesKHR capabilities; // E.g. min/max images in chain, min/max width and height of images
     std::vector<VkSurfaceFormatKHR> formats; // E.g. pixel format, colour space
-    std::vector<VkPresentModeKHR> presentModes; // Available presentation modes
+    std::vector<VkPresentModeKHR> presentModes; // Available presentation modes, e.g. vertical sync, triple buffering
 };
 
 class HelloTriangleApplication {
@@ -110,6 +110,7 @@ private:
     std::vector<VkImage> swapChainImages; // Handles for the images in the swap chain
     VkFormat swapChainImageFormat; // Format of the swap chain images
     VkExtent2D swapChainExtent; // Extent of the swap chain images
+    std::vector<VkImageView> swapChainImageViews; // Holds the image views for each image in the swap chain
 
     void initWindow() {
         glfwInit(); // This must be called to initialise the GLFW library
@@ -133,6 +134,8 @@ private:
         createLogicalDevice(); // Creates the logical device for Vulkan
 
         createSwapChain(); // Creates the swap chain for Vulkan
+
+        createImageViews(); // Creates the image views for each image in the swap chain
     }
 
     void mainLoop() {
@@ -143,6 +146,10 @@ private:
     }
 
     void cleanup() {
+        for (VkImageView imageView : swapChainImageViews) {
+            vkDestroyImageView(device, imageView, nullptr); // Unlike images, image views were explicitly created by us, hence they need to be destroyed
+        }
+
         vkDestroySwapchainKHR(device, swapChain, nullptr); // Destroys the swap chain
         vkDestroyDevice(device, nullptr); // Destroys the logical device
 
@@ -416,6 +423,43 @@ private:
         // Lastly, store the swap chain image format and extent in member variables
         swapChainImageFormat = surfaceFormat.format;
         swapChainExtent = extent;
+    }
+
+    void createImageViews() {
+        /*
+        * Creates the image views for each image in the swap chain.
+        * Image views describe how to access the image and which part of the image to access.
+        * E.g. if it should be treated as a 2D texture depth texture without any mipmapping levels.
+        */
+        swapChainImageViews.resize(swapChainImages.size()); // Resize the list to fit all the image views
+
+        // Loops through each image in the swap chain to create a corresponding image view
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            VkImageViewCreateInfo createInfo{}; // Struct to hold image view creation data
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = swapChainImages[i]; // Image to create image view for
+
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; // Image can also be 1D or 3D
+            createInfo.format = swapChainImageFormat; // Format of the image
+
+            // The colour channels can be mixed around to produce different effects (e.g. a monochrome texture when all channels are red)
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+            // Describes what the image's purpose is and which part of the image should be accessed
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; // Images will be used as colour targets
+            createInfo.subresourceRange.baseMipLevel = 0; // No mipmapping levels
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0; // No multiple layers (a stereographic 3D application could be created with multiple layers)
+            createInfo.subresourceRange.layerCount = 1;
+
+            // Now the image view can be created
+            if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to create image views!");
+            }
+        }
     }
 
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
