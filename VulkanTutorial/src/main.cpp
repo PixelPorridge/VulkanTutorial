@@ -111,6 +111,7 @@ private:
 	VkFormat swapChainImageFormat; // Format of the swap chain images
 	VkExtent2D swapChainExtent; // Extent of the swap chain images
 	std::vector<VkImageView> swapChainImageViews; // Holds the image views for each image in the swap chain
+	std::vector<VkFramebuffer> swapChainFramebuffers; // Each framebuffer corresponds to an image in the swap chain
 
 	VkRenderPass renderPass; // Render pass to be used by the graphics pipeline
 	VkPipelineLayout pipelineLayout; // Specifies uniform values for shaders
@@ -144,6 +145,8 @@ private:
 		createRenderPass(); // Creates the render pass for the graphics pipeline
 
 		createGraphicsPipeline(); // Creates the graphics pipeline
+
+		createFramebuffers(); // Creates a framebuffer for each image in the swap chain
 	}
 
 	void mainLoop() {
@@ -154,6 +157,10 @@ private:
 	}
 
 	void cleanup() {
+		for (VkFramebuffer framebuffer : swapChainFramebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, nullptr); // Destroys each framebuffer
+		}
+
 		vkDestroyPipeline(device, graphicsPipeline, nullptr); // Destroys the graphics pipeline
 
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr); // Destroys the pipeline layout
@@ -161,7 +168,7 @@ private:
 		vkDestroyRenderPass(device, renderPass, nullptr); // Destroys the render pass
 
 		for (VkImageView imageView : swapChainImageViews) {
-			vkDestroyImageView(device, imageView, nullptr); // Unlike images, image views were explicitly created by us, hence they need to be destroyed
+			vkDestroyImageView(device, imageView, nullptr); // Destroys each image view
 		}
 
 		vkDestroySwapchainKHR(device, swapChain, nullptr); // Destroys the swap chain
@@ -675,6 +682,38 @@ private:
 		// Each shader module can now be deleted, since they are not required after the graphics pipeline has been created
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+	}
+
+	void createFramebuffers() {
+		/*
+		* Creates a framebuffer for each image in the swap chain.
+		* This is done by iterating through the previously created image views, and assigning each one to a newly created framebuffer.
+		* Some other details are required as well from the swap chain images specification.
+		*/
+		swapChainFramebuffers.resize(swapChainImageViews.size()); // Resize to hold number of image views
+
+		// Iterate through images views to create framebuffers from each of them
+		for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+			// Image view to be used with the framebuffer
+			VkImageView attachments[] = {
+				swapChainImageViews[i]
+			};
+
+			// Fill in the framebuffer create info structure
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = renderPass; // Framebuffer only be used with render passes it is compatible with
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = attachments; // Image views to be bound to the respective attachments in the render pass
+			framebufferInfo.width = swapChainExtent.width;
+			framebufferInfo.height = swapChainExtent.height;
+			framebufferInfo.layers = 1; // Single layer images
+
+			// Create the framebuffer in the specified image view index
+			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+				throw std::runtime_error("Failed to create framebuffer!");
+			}
+		}
 	}
 
 	VkShaderModule createShaderModule(const std::vector<char>& code) {
