@@ -114,6 +114,7 @@ private:
 
 	VkRenderPass renderPass; // Render pass to be used by the graphics pipeline
 	VkPipelineLayout pipelineLayout; // Specifies uniform values for shaders
+	VkPipeline graphicsPipeline; // Graphics pipeline
 
 	void initWindow() {
 		glfwInit(); // This must be called to initialise the GLFW library
@@ -153,6 +154,8 @@ private:
 	}
 
 	void cleanup() {
+		vkDestroyPipeline(device, graphicsPipeline, nullptr); // Destroys the graphics pipeline
+
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr); // Destroys the pipeline layout
 
 		vkDestroyRenderPass(device, renderPass, nullptr); // Destroys the render pass
@@ -530,6 +533,8 @@ private:
 		* Multisampling: This is a way to perform anti-aliasing and requires a GPU feature to be enabled.
 		* Colour Blending: Blends each fragments colour with a colour that is already in the framebuffer.
 		* Pipeline Layout: Specifies uniform values for use in shaders.
+		* Render Pass: Not described in this function although is required.
+		* After all these structures are defined, the graphics pipeline can be created.
 		*/
 		// Reads the shader code from each file
 		std::vector<char> vertShaderCode = readFile("shaders/vert.spv");
@@ -634,6 +639,37 @@ private:
 		// Pipeline layout can now be created and stored in a class member
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("Failed to create pipeline layout!");
+		}
+
+		// The graphics pipeline create info can now be filled in, starting with the shader stages info
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2; // Number of shader stages
+		pipelineInfo.pStages = shaderStages; // Pointer to the array of shader stages as defined earlier
+
+		// Next we reference all the structures describing the fixed-function stage
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr;
+		pipelineInfo.pColorBlendState = &colourBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+
+		pipelineInfo.layout = pipelineLayout; // Pipeline layout reference
+
+		pipelineInfo.renderPass = renderPass; // Render pass reference
+		pipelineInfo.subpass = 0; // Index of the subpass this graphics pipeline will use
+
+		// Graphics pipelines can derive from other pipelines if they share similar functionality
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Parent graphics pipeline
+		pipelineInfo.basePipelineIndex = -1; // Index of parent graphics pipeline about to be created
+
+		// Finally, the graphics pipeline can be created
+		// This creation function has a couple extra parameters to specify a pipeline cache and/or multiple pipelines
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("Failed to create graphics pipeline!");
 		}
 
 		// Each shader module can now be deleted, since they are not required after the graphics pipeline has been created
