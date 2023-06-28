@@ -112,6 +112,7 @@ private:
 	VkExtent2D swapChainExtent; // Extent of the swap chain images
 	std::vector<VkImageView> swapChainImageViews; // Holds the image views for each image in the swap chain
 
+	VkRenderPass renderPass; // Render pass to be used by the graphics pipeline
 	VkPipelineLayout pipelineLayout; // Specifies uniform values for shaders
 
 	void initWindow() {
@@ -139,6 +140,8 @@ private:
 
 		createImageViews(); // Creates the image views for each image in the swap chain
 
+		createRenderPass(); // Creates the render pass for the graphics pipeline
+
 		createGraphicsPipeline(); // Creates the graphics pipeline
 	}
 
@@ -151,6 +154,8 @@ private:
 
 	void cleanup() {
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr); // Destroys the pipeline layout
+
+		vkDestroyRenderPass(device, renderPass, nullptr); // Destroys the render pass
 
 		for (VkImageView imageView : swapChainImageViews) {
 			vkDestroyImageView(device, imageView, nullptr); // Unlike images, image views were explicitly created by us, hence they need to be destroyed
@@ -465,6 +470,54 @@ private:
 		}
 	}
 
+	void createRenderPass() {
+		/*
+		* Creates the render pass for the graphics pipeline.
+		* Render passes consist of attachments, attachment references, and subpasses.
+		*/
+		// In this case we'll use a single colour buffer attachment represented by one image of the swap chain
+		VkAttachmentDescription colourAttachment{};
+		colourAttachment.format = swapChainImageFormat; // Matches swap chain image format
+		colourAttachment.samples = VK_SAMPLE_COUNT_1_BIT; // No multisampling so 1 bit
+
+		// These fields determine what to do with the data before and after rendering
+		colourAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // Means framebuffer will be cleared to black before rendering again
+		colourAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // Rendered contents will be stored in memory to be used later
+
+		// These fields only apply to applications using stencil data, which this one does not
+		colourAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colourAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+		// Images need to be transitioned to specific layouts depending on what operations they will be involved in next
+		colourAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // Layout of image before render pass begins
+		colourAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // Layout to transition to after render pass finishes
+
+		// This structure holds information to reference an attachment previously described, in this case the colour attachment
+		VkAttachmentReference colourAttachmentRef{};
+		colourAttachmentRef.attachment = 0; // Which attachment to reference by index in the array
+		colourAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // Layout to transition to when the subpass starts
+
+		// Description about a subpass consisting of attachments
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // This subpass is a graphics subpass
+		subpass.colorAttachmentCount = 1; // Number of attachments in subpass
+		subpass.pColorAttachments = &colourAttachmentRef; // References to the attachments for use
+		// The index of the attachment in this array is directly referenced from shaders with layout(location = 0)
+
+		// With all attachments and subpasses created, the render pass create info can now be filled in
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colourAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		// Render pass can now be created
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+			throw std::runtime_error("Failed to create render pass!");
+		}
+	}
+
 	void createGraphicsPipeline() {
 		/*
 		* Creates a graphics pipeline.
@@ -505,7 +558,7 @@ private:
 		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
 		// This structure describes the format of the vertex data to be passed to the vertex shader
-		// *** Currently hard coding the vertex data so this structure currently holds no data
+		// *** Currently hard coding the vertex data so this structure holds no data
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 		vertexInputInfo.vertexBindingDescriptionCount = 0;
