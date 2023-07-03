@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 
 #include <iostream>
 #include <vector>
@@ -7,6 +8,7 @@
 #include <set>
 #include <algorithm>
 #include <fstream>
+#include <array>
 
 // Window sizes
 const uint32_t WIDTH = 800;
@@ -82,6 +84,53 @@ struct SwapChainSupportDetails {
 	VkSurfaceCapabilitiesKHR capabilities; // E.g. min/max images in chain, min/max width and height of images
 	std::vector<VkSurfaceFormatKHR> formats; // E.g. pixel format, colour space
 	std::vector<VkPresentModeKHR> presentModes; // Available presentation modes, e.g. vertical sync, triple buffering
+};
+
+struct Vertex {
+	/*
+	* Represents a single vertex consisting of its position and colour.
+	*/
+	glm::vec2 pos;
+	glm::vec3 colour;
+
+	static VkVertexInputBindingDescription getBindingDescription() {
+		/*
+		* Describes the rate to load data from memory throughout the vertices.
+		*/
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0; // Index of the binding in the array of bindings
+		bindingDescription.stride = sizeof(Vertex); // Number of bytes from one entry to the next
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX; // Move to next data entry after each vertex (not each instance)
+
+		return bindingDescription;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+		/*
+		* Describes how to extract a vertex attribute from a chunk of vertex data originating from a binding description.
+		* Each vertex has two attributes, position and colour, so we need two attribute description structures.
+		*/
+		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+		attributeDescriptions[0].binding = 0; // Binding the per-vertex data comes from
+		attributeDescriptions[0].location = 0; // References the location directive of the input in the vertex shader (position is at location = 0)
+		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; // Type of data for the attribute (vec2 for position)
+		attributeDescriptions[0].offset = offsetof(Vertex, pos); // Number of bytes since the start of the per-vertex data to read from
+
+		attributeDescriptions[1].binding = 0; // Both attributes come from same binding
+		attributeDescriptions[1].location = 1; // Colour attribute is at location = 1
+		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT; // Type of data is vec3 for colour
+		attributeDescriptions[1].offset = offsetof(Vertex, colour); // Reads from where the colour data is stored per-vertex
+
+		return attributeDescriptions;
+	}
+};
+
+// Vertex data to represent a triangle
+const std::vector<Vertex> vertices = {
+	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
 
 class HelloTriangleApplication {
@@ -665,13 +714,16 @@ private:
 		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
 		// This structure describes the format of the vertex data to be passed to the vertex shader
-		// *** Currently hard coding the vertex data so this structure holds no data
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
 		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.pVertexBindingDescriptions = nullptr; // Bindings is the spacing between the data and whether its per-vertex or per-instance
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
-		vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Type of the attributes passed to the vertex shader, which binding to load from and which offset
+
+		auto bindingDescription = Vertex::getBindingDescription();
+		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // Bindings is the spacing between the data and whether its per-vertex or per-instance
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Type of attributes passed to vertex shader, which binding to load from and which offset
 
 		// This structure describes what kind of geometry will be drawn from the vertices
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
