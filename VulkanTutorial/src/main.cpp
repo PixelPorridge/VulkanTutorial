@@ -128,17 +128,35 @@ private:
 	std::vector<VkFence> inFlightFences; // Signal to ensure only one frame is rendering at a time
 	uint32_t currentFrame = 0; // Current frame being processed
 
+	bool framebufferResized = false; // Indicates whether a window resize has occured
+
 	void initWindow() {
+		/*
+		* Initialises the GLFW window.
+		*/
 		glfwInit(); // This must be called to initialise the GLFW library
 
 		// glfwWindowHint sets options for the window
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // Tells GLFW to not create an OpenGL context, since that's what it was first built to do
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // Disables the ability to resize the window, since it's a little difficult to handle in Vulkan
 
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr); // Creates a GLFW window, simple enough
+
+		glfwSetWindowUserPointer(window, this); // Sets an arbitrary pointer of the application object for the specified window
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback); // Sets the function to be called when the window is resized
+	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+		/*
+		* Called whenever the window is resized.
+		*/
+		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window)); // Get the application object using the window
+		app->framebufferResized = true; // Tells the application that the window has been resized
 	}
 
 	void initVulkan() {
+		/*
+		* Initalises Vulkan and its objects.
+		*/
 		createInstance(); // Creates an instance of Vulkan
 
 		setupDebugMessenger(); // Sets up a debug messenger
@@ -167,6 +185,9 @@ private:
 	}
 
 	void mainLoop() {
+		/*
+		* Main loop for the application.
+		*/
 		// Runs as long as the window is open
 		while (!glfwWindowShouldClose(window)) {
 			glfwPollEvents(); // Checks for input events
@@ -176,7 +197,34 @@ private:
 		vkDeviceWaitIdle(device); // Waits for drawing and presentation operations to finish
 	}
 
+	void cleanupSwapChain() {
+		/*
+		* Cleans up the swap chain and its objects.
+		*/
+		// Destroys each framebuffer
+		for (VkFramebuffer framebuffer : swapChainFramebuffers) {
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+
+		// Destroys each image view
+		for (VkImageView imageView : swapChainImageViews) {
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+
+		vkDestroySwapchainKHR(device, swapChain, nullptr); // Destroys the swap chain
+	}
+
 	void cleanup() {
+		/*
+		* Cleans up all objects in the application.
+		*/
+		cleanupSwapChain(); // Destroys the swap chain and all its dependable objects
+
+		vkDestroyPipeline(device, graphicsPipeline, nullptr); // Destroys the graphics pipeline
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr); // Destroys the pipeline layout
+
+		vkDestroyRenderPass(device, renderPass, nullptr); // Destroys the render pass
+
 		// Destroys semaphores and fences for each frame in flight
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr); // Destroys the image available semaphore
@@ -186,21 +234,6 @@ private:
 
 		vkDestroyCommandPool(device, commandPool, nullptr); // Destroys the command pool
 
-		// Destroys each framebuffer
-		for (VkFramebuffer framebuffer : swapChainFramebuffers) {
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		}
-
-		vkDestroyPipeline(device, graphicsPipeline, nullptr); // Destroys the graphics pipeline
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr); // Destroys the pipeline layout
-		vkDestroyRenderPass(device, renderPass, nullptr); // Destroys the render pass
-
-		// Destroys each image view
-		for (VkImageView imageView : swapChainImageViews) {
-			vkDestroyImageView(device, imageView, nullptr);
-		}
-
-		vkDestroySwapchainKHR(device, swapChain, nullptr); // Destroys the swap chain
 		vkDestroyDevice(device, nullptr); // Destroys the logical device
 
 		// Destroys the Vulkan debug messenger if validation layers are enabled
@@ -216,18 +249,39 @@ private:
 		glfwTerminate(); // Terminates the GLFW library
 	}
 
-	void createInstance() {
-		// Before any Vulkan code is run, the requested validation layers should be checked for availability
-		if (enableValidationLayers && !checkValidationLayerSupport()) {
-			throw std::runtime_error("Validation layers requested, but not available!");
+	void recreateSwapChain() {
+		/*
+		* Recreates the swap chain and all objects that depend on it or the window size.
+		*/
+		// If window is minimised, pause it until it is back in the foreground
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(window, &width, &height);
+		while (width == 0 || height == 0) {
+			glfwGetFramebufferSize(window, &width, &height);
+			glfwWaitEvents(); // Pauses the window
 		}
 
+		vkDeviceWaitIdle(device); // Wait for other resources to finish before accessing
+
+		cleanupSwapChain(); // Destroy old swap chain objects
+
+		createSwapChain(); // Recreate swap chain again
+		createImageViews(); // Recreate image views
+		createFramebuffers(); // Recreate frame buffers
+	}
+
+	void createInstance() {
 		/*
 		* In order to create an instance, some structs must be filled out first.
 		* The compulsory struct is VkInstanceCreateInfo, and VkApplicationInfo is optional, but recommended.
 		* Once VkInstanceCreateInfo is created, it is then provided to vkCreateInstance to create an instance for Vulkan.
 		* This is generally how objects in Vulkan are created.
 		*/
+		// Before any Vulkan code is run, the requested validation layers should be checked for availability
+		if (enableValidationLayers && !checkValidationLayerSupport()) {
+			throw std::runtime_error("Validation layers requested, but not available!");
+		}
+
 		VkApplicationInfo appInfo{}; // A struct to hold information about the application
 		// While optional, it essentially provides the driver with useful information to optimise the application
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO; // Many structs for Vulkan require you to explicitly specify the type
@@ -903,13 +957,23 @@ private:
 		* Then it obtains the next image in the swap chain and records the command buffer for it.
 		* After configuration, the command buffers are submitted to the graphics queue for execution.
 		* Once rendering of the image has finished, it can be queued up for presentation and shown to the screen.
+		* If the window is resized or surface properties change, this function will pick that up and call a swap chain recreation.
 		*/
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX); // Waits for the previous frame to finish
-		vkResetFences(device, 1, &inFlightFences[currentFrame]); // Resets the fence to unsignalled state
 
 		// Gets the next image in the swap chain and saves it's index to pick the VkFrameBuffer
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+		// Checks if the swap chain is adequate for image processing (will not be if window size has changed)
+		if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+			recreateSwapChain();
+			return;
+		} else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+			throw std::runtime_error("Failed to acquire swap chain image!");
+		}
+
+		vkResetFences(device, 1, &inFlightFences[currentFrame]); // Resets the fence to unsignalled state (only after we know swap chain is adequate)
 
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0); // Resets command buffer to ensure it is able to be recorded
 		recordCommandBuffer(commandBuffers[currentFrame], imageIndex); // Records the commands for the specified image index
@@ -956,7 +1020,15 @@ private:
 
 		presentInfo.pResults = nullptr; // An array of VkResult can be specified here to check each swap chain if presentation was successful
 
-		vkQueuePresentKHR(presentQueue, &presentInfo); // Submits the request to present an image to the swap chain
+		result = vkQueuePresentKHR(presentQueue, &presentInfo); // Submits the request to present an image to the swap chain
+
+		// Checks if the swap chain is adequate for image presenting (will not be if window size or surface properties have changed)
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+			framebufferResized = false;
+			recreateSwapChain();
+		} else if (result != VK_SUCCESS) {
+			throw std::runtime_error("Failed to present swap chain image!");
+		}
 
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT; // Advance to the next frame
 	}
