@@ -126,11 +126,17 @@ struct Vertex {
 	}
 };
 
-// Vertex data to represent a triangle
+// Vertex data to represent a rectangle
 const std::vector<Vertex> vertices = {
-	{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+// Index data to reuse multiple vertices in the above data
+const std::vector<uint16_t> indices = {
+	0, 1, 2, 2, 3, 0
 };
 
 class HelloTriangleApplication {
@@ -173,6 +179,8 @@ private:
 
 	VkBuffer vertexBuffer; // Buffer that stores vertex data
 	VkDeviceMemory vertexBufferMemory; // Stores the vertex buffer memory
+	VkBuffer indexBuffer; // Buffer that stores index data
+	VkDeviceMemory indexBufferMemory; // Stores the index buffer memory
 
 	std::vector<VkCommandBuffer> commandBuffers; // Records command operations to be performed on the GPU (freed with command pool so cleanup is not needed)
 
@@ -234,6 +242,8 @@ private:
 
 		createVertexBuffer(); // Creates a vertex buffer
 
+		createIndexBuffer(); // Creates an index buffer
+
 		createCommandBuffers(); // Allocates the command buffers
 
 		createSyncObjects(); // Creates the semaphores and fences
@@ -274,6 +284,9 @@ private:
 		* Cleans up all objects in the application.
 		*/
 		cleanupSwapChain(); // Destroys the swap chain and all its dependable objects
+
+		vkDestroyBuffer(device, indexBuffer, nullptr); // Destroys the index buffer
+		vkFreeMemory(device, indexBufferMemory, nullptr); // Frees the index buffer memory
 
 		vkDestroyBuffer(device, vertexBuffer, nullptr); // Destroys the vertex buffer
 		vkFreeMemory(device, vertexBufferMemory, nullptr); // Frees the vertex buffer memory
@@ -923,6 +936,33 @@ private:
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
+	void createIndexBuffer() {
+		/*
+		* Creates an index buffer and writes our index data to it.
+		* Index buffers are used to reorder vertex data and reuse existing data for multiple vertices.
+		* This is applicable when creating 3D meshes, as multiple triangles will be sharing vertices with eachother.
+		* This function works almost identically to the above vertex buffer creation function.
+		* (Refer to it for code explanation)
+		*/
+		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, indices.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+		copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
 	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
 		/*
 		* Creates a buffer that holds data.
@@ -1054,7 +1094,7 @@ private:
 		* Commands being recorded are indicated by the vkCmd function prefix, and the first parameter must be the command buffer.
 		* Also, all vkCmd functions return void, so no error handling can be performed during recording.
 		* Graphics pipeline then has to be bound, then since viewport and scissor state were set to dynamic, they must be configured.
-		* Vertex buffers holding data about the triangle are then bound to the bindings specifed in the graphics pipeline.
+		* Vertex buffers holding data about the triangles are then bound to the bindings specifed in the graphics pipeline.
 		* Finally, the draw command can be recorded, then the render pass and command buffer are finished.
 		*/
 		VkCommandBufferBeginInfo beginInfo{};
@@ -1111,8 +1151,11 @@ private:
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-		// Records the draw command for the triangle
-		vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		// Bind the index buffer (only one can be used)
+		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+		// Records the draw command for the square
+		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		// Ends the render pass
 		vkCmdEndRenderPass(commandBuffer);
