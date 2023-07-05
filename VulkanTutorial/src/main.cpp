@@ -895,45 +895,114 @@ private:
 	void createVertexBuffer() {
 		/*
 		* Creates a vertex buffer and writes our vertex data to it.
-		* First we create a buffer that can store the vertex data.
+		* We first create a staging buffer to copy the data to, then transfer the data from that buffer over to the actual vertex buffer.
+		* The vertex buffer is allocated from a memory type that is device local, which is most optimal for the GPU to read from.
+		* But data cannot easily be copied over to buffers with this memory type, hence why we have to transfer it from the staging buffer.
+		*/
+		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size(); // Calculates the size needed for the buffer
+
+		// Creates a staging buffer for mapping and copying the vertex data
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+		// We can now write the vertex data to the staging buffer using memcpy
+		void* data; // Pointer to the mapped memory
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data); // Accesses a region of the specified memory resource defined by an offset and size
+		memcpy(data, vertices.data(), (size_t)bufferSize); // Writes the vertex data to the mapped memory
+		vkUnmapMemory(device, stagingBufferMemory); // Unmaps the memory since we no longer need to write to it
+
+		// Creates the actual vertex buffer which is allocated from a memory type that is device local
+		// This generally means vkMapMemory can not be used, however data from the staging buffer can be copied over to this buffer
+		createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+		copyBuffer(stagingBuffer, vertexBuffer, bufferSize); // Copies contents of staging buffer into vertex buffer
+
+		// Staging buffer is no longer needed, so destroy buffer and free memory
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+		/*
+		* Creates a buffer that holds data.
+		* First we create a buffer that can store the data.
 		* Then we obtain the buffer memory requirements and whether the GPU offers the type of memory the buffer needs.
-		* Memory can then be allocated on the GPU and bound to the vertex buffer.
-		* Finally, the vertex data can be written to the memory region.
+		* Memory can then be allocated on the GPU and bound to the buffer.
 		*/
 		VkBufferCreateInfo bufferInfo{};
 		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferInfo.size = sizeof(vertices[0]) * vertices.size(); // Size of the buffer in bytes
-		bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; // How the data in the buffer is going to be used
+		bufferInfo.size = size; // Size of the buffer in bytes
+		bufferInfo.usage = usage; // How the data in the buffer is going to be used
 		bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // Like images in the swap chain, buffers can be owned by specific queue families
 
 		// Vertex buffer can now be created
-		if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-			throw std::runtime_error("Failed to create vertex buffer!");
+		if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+			throw std::runtime_error("Failed to create buffer!");
 		}
 
 		// We need to query the buffers memory requirements before we allocate memory to it
 		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+		vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
 
 		// Memory can now be allocated using this structure and providing the size and type of the memory
 		VkMemoryAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
-		// Allocate the memory for the vertex buffer
-		if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-			throw std::runtime_error("Failed to allocate vertex buffer memory!");
+		// Allocate memory for the buffer
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+			throw std::runtime_error("Failed to allocate buffer memory!");
 		}
 
-		vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0); // Binds the vertex buffer memory to the vertex buffer
+		vkBindBufferMemory(device, buffer, bufferMemory, 0); // Binds the buffer memory to the buffer
 		// The fourth parameter specifies the offset within the region of memory
+	}
 
-		// We can now write the vertex data to the buffer using memcpy
-		void* data; // Pointer to the mapped memory
-		vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data); // Accesses a region of the specified memory resource defined by an offset and size
-		memcpy(data, vertices.data(), (size_t)bufferInfo.size); // Writes the vertex data to the mapped memory
-		vkUnmapMemory(device, vertexBufferMemory); // Unmaps the memory since we no longer need to write to it
+	void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+		/*
+		* Copies the contents of one buffer over to another.
+		* Memory transfer operations are executed using command buffers much like drawing commands.
+		* This implementation uses the existing command pool, but it may be more optimal to create a new temporary command pool.
+		* Buffer copying requires a queue family that supports transfer operations, which luckily all families with the graphics or compute bit has.
+		*/
+		VkCommandBufferAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandPool = commandPool; // Uses the existing command pool
+		allocInfo.commandBufferCount = 1;
+
+		// Create the command buffer to store transfer commands
+		VkCommandBuffer commandBuffer;
+		vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT; // Command buffer will only be used once
+
+		vkBeginCommandBuffer(commandBuffer, &beginInfo); // Begin recording transfer commands
+
+		// Record command to copy data from source buffer into destination buffer
+		VkBufferCopy copyRegion{};
+		copyRegion.srcOffset = 0; // Offset of source buffer region
+		copyRegion.dstOffset = 0; // Offset of destination buffer region
+		copyRegion.size = size; // Size of data to copy
+		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+		vkEndCommandBuffer(commandBuffer); // End after copy command has been recorded
+
+		// Configure command buffer submit info
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+
+		vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE); // Execute data transfer
+		vkQueueWaitIdle(graphicsQueue); // Waits for the graphics queue to become idle (command execution finished)
+		// Using a fence would allow us to schedule multiple transfers simultaneously and wait for all of them to complete (more optimal)
+
+		vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer); // Clean up temporary command buffer used for the transfer operation
 	}
 
 	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -985,6 +1054,7 @@ private:
 		* Commands being recorded are indicated by the vkCmd function prefix, and the first parameter must be the command buffer.
 		* Also, all vkCmd functions return void, so no error handling can be performed during recording.
 		* Graphics pipeline then has to be bound, then since viewport and scissor state were set to dynamic, they must be configured.
+		* Vertex buffers holding data about the triangle are then bound to the bindings specifed in the graphics pipeline.
 		* Finally, the draw command can be recorded, then the render pass and command buffer are finished.
 		*/
 		VkCommandBufferBeginInfo beginInfo{};
